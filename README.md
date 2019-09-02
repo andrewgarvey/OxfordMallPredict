@@ -11,9 +11,9 @@ Purpose:
 
 Clean massive messy datafiles 
 
-Seperate Classification Model to impute Gender
+Seperate Classification Model to impute Gender, mostly done by group member
 
 Create association rules for mall visitors based on previous shopping, gender dynamically considered 
-  
+
 
 
