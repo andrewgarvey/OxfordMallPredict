@@ -1,0 +1,554 @@
+---
+title: "Oxford Clean Version"
+author: "Andrew Garvey"
+date: "October 26, 2018"
+output: word_document
+---
+```{r setup, include=FALSE, }
+knitr::opts_chunk$set(echo = TRUE, results = "hide")
+knitr::opts_knit$set(root.dir = "D:/QUEENS MMAI/869 ML and AI/Project/OutputData")
+```
+# READ ME :  
+Hi, 
+
+The 2 commented out code sections are very memory expensive, they needed to be run only once and were able to be run seperately,
+they produce the binary matrices for "Customer_matrix_for_classification.csv" and "Visit_matrix_for_classification.csv" ... 
+
+These 2 files are provided, and can be used in exploring the "3.4-ng-gender-classification-model-customers-visits.Rmd" classification model
+
+The output of "3.4-ng-gender-classification-model-customers-visits.Rmd" is "visits_w_gender.csv" which is also provided. 
+
+"visit_w_gender.csv" is used in this file in the Classification Results section 
+
+----------------------------------------------------------------------------------------------------------------------
+TO RUN THIS FILE....
+
+ProcessedWD must contain:
+
+"visit_w_gender.csv" 
+
+RawWD must contain:
+
+"Data Set - Jan 2018 to Jun 2018_Financials and Distance Matrix.xlsx"
+"1223_sw_jan2018_to_july2018.csv"
+"JAN 2018_flow.csv"
+
+Cheers
+
+Greenwood Group
+
+# Setup 
+## Set WDs 
+```{r}
+RawWD <- "D:/QUEENS MMAI/869 ML and AI/Project/RawData"
+ProcessedWD <- "D:/QUEENS MMAI/869 ML and AI/Project/ProcessedData"
+OutputWD <-"D:/QUEENS MMAI/869 ML and AI/Project/OutputData"
+```
+
+## Libraries
+```{r}
+library(dplyr)
+library(lubridate)
+library(tibble)
+library(arules)
+library(readxl)
+library(data.table)
+library(tidyr)
+library(reshape2)
+library(plyr)
+library(ggplot2)
+library(lettercase)
+```
+
+## Read inputs
+```{r}
+setwd(RawWD)
+
+lookup_orig<-read_excel("Data Set - Jan 2018 to Jun 2018_Financials and Distance Matrix.xlsx",2)
+distance_orig<-read_excel("Data Set - Jan 2018 to Jun 2018_Financials and Distance Matrix.xlsx",3)
+customers_orig<-read.csv("1223_sw_jan2018_to_july2018.csv",header=TRUE, na.string=c(NA," ",""))
+visits_orig<-read.csv("JAN 2018_flow.csv",header=TRUE, na.strings = c("NA"," ",""))
+```
+
+## Make copies (so you never have to redo the read.csv) 
+```{r}
+lookup<-lookup_orig
+distance<-distance_orig
+customers<-customers_orig
+visits<-visits_orig
+```
+
+
+# Classification
+## Work with Customers, Make a Binary Matrix for Classification Model Input
+### Removing Values 
+
+Remove Useless rows
+```{r}
+customers<-subset(customers,select=-c(MAC.address,tdid,swid,time_wifi_login_epoch,time_wifi_login_utc,login_type,name,email,
+                                           date_of_birth,current_city,hometown,postal_code,country_residence,
+                                           country_nationality,additional_opt_in,phone_number,phone_verified_sms,
+                                           fb_page_likes,language,SUNDAY_visits,MONDAY_visits.,TUESDAY_visits.,WEDNESDAY_visits.,
+                                           THURSDAY_visits.,FRIDAY_visits.,SATURDAY_visits..,total_dwell_min,
+                                           num_visit_90_days,first_time_detection_utc,last_time_detection_utc))
+```
+
+Remove any values where the customer had less than 10 minutes,
+```{r}
+for (i in 1:20) 
+{ 
+  colindex<-(4+(i-1)*5)  
+  rowindex <- customers[,colindex]<=10
+  rowindex <- rowindex==TRUE|is.na(rowindex) #handles NA values
+  
+  customers[rowindex,colindex-1]<-NA
+  customers[rowindex,colindex]<-NA
+  customers[rowindex,colindex+1]<-NA
+  customers[rowindex,colindex+2]<-NA
+  customers[rowindex,colindex+3]<-NA
+}
+```
+
+Remove any values that are not "STORE"
+```{r}
+for (i in 1:20) 
+{ 
+  colindex <- (5+(i-1)*5)  
+  rowindex <- customers[,colindex]=="OTHER"
+  rowindex <- rowindex==TRUE|is.na(rowindex) #handles NA values
+  
+  customers[rowindex,colindex-2]<-NA
+  customers[rowindex,colindex-1]<-NA
+  customers[rowindex,colindex]<-NA
+  customers[rowindex,colindex+1]<-NA
+  customers[rowindex,colindex+2]<-NA
+}
+```
+
+Make A list of customer stores
+```{r}
+customer_stores<-customers[,grepl("name",colnames(customers))]
+unique_customer_stores<-as.vector(unique(unlist(customer_stores)))
+```
+
+Insure the customers still have atleast 1 store visit
+```{r}
+customer_dwell_check <- rowSums(customers[,grepl("dwell",names(customers))],na.rm=TRUE)
+customers<-customers[customer_dwell_check!=0,]
+```
+
+### Making the Matrix
+Store vectors for Age and Gender
+```{r}
+# age<-customers$age_range
+# gender<-customers$gender
+```
+
+Make the dataframe just an id + stores
+```{r}
+# id<-1:length(age)
+# customers<-data.frame(id,customers[,grepl("name",colnames(customers))])
+```
+
+Make binary matrix, add back in id,gender,age
+```{r echo=FALSE}
+# temp<-melt(customers,id.var="id")
+# temp<-temp[!is.na(temp$value),]
+# customers<-dcast( temp, id ~ value, function(x) as.numeric(length(x)>0) )
+# CUST_MATRIX_FOR_CLASS <- cbind(id,age,gender,customers[,2:221]) # last row was NA, so we get rid of it
+```
+
+Write to processedWD
+```{r echo =FALSE}
+# setwd(ProcessedWD)
+# write.csv(CUST_MATRIX_FOR_CLASS,"CUSTOMER_MATRIX_FOR_CLASSIFICATION.csv",row.names=FALSE)
+```
+
+Store the store columns from CUST_MATRIX_FOR_CLASSIFICATION
+Will be needed to insure VISIT_MATRIX_FOR_CLASSIFICATION has same columns
+```{r}
+# class_values<-colnames(customers[,2:221])
+```
+
+## Work with Visits, Make a Binary Matrix for Classification Model Output
+
+### Removing Values
+
+Remove Unused Column
+```{r}
+visits<-subset(visits,select = -c(Encrypte.Mac))
+```
+
+Remove unnaccepable dwell times, <5 is a passerby, >180 is an employee
+```{r}
+for (i in 1:100) 
+{ 
+  
+  colindex<-(1+3*i)  
+  rowindex <- visits[,colindex]<=5|visits[,colindex]>=180
+  rowindex <- rowindex==TRUE|is.na(rowindex) #handles NA values
+  
+  visits[rowindex,colindex]<-NA
+  visits[rowindex,colindex-1]<-NA
+  visits[rowindex,colindex-2]<-NA
+  
+}
+```
+
+Remove any values that are not "STORE"
+```{r}
+for (i in 1:100) 
+{ 
+  
+  colindex<-(3*i)  
+  rowindex <- visits[,colindex]=="OTHER"
+  rowindex <- rowindex==TRUE|is.na(rowindex) #handles NA values
+  
+  visits[rowindex,colindex-1]<-NA
+  visits[rowindex,colindex]<-NA
+  visits[rowindex,colindex+1]<-NA
+  
+}
+```
+
+Insure the visit still has atleast 1 store visit
+```{r}
+StoreDwellCheck <- rowSums(visits[,grepl("Dwell",names(visits))],na.rm=TRUE)
+visits<-visits[StoreDwellCheck!=0,]
+```
+
+
+### STORING AND MAKING VARIOUS INDEXs 
+
+STORE "accepable visits", cleaned up visits, used later by RULES which will clean further to distance only stores
+```{r}
+acceptable_visits<-visits
+```
+
+Remove Type Columns
+```{r}
+visits<-visits[,!grepl("Type",names(visits))]
+```
+
+Make Date Usable
+```{r}
+visits$Date<-gsub("EDT 2018|EST 2018","",visits$Date)
+visits$Date<-gsub("Mon|Tue|Wed|Thu|Fri|Sat|Sun","",visits$Date)
+visits$Date<-ymd_hms(paste0("2018 ",visits$Date))
+```
+
+Store date, weekday INDEXs
+```{r}
+date<-visits$Date
+weekday<-(weekdays(visits$Date))
+```
+
+Make the dataframe just an id + stores 
+```{r}
+# id<-1:length(date)
+# visits<-data.frame(id,visits[,grepl("Name",colnames(visits))])
+```
+
+Make binary matrix
+```{r}
+# temp<-melt(visits,id.var="id")
+# temp<-temp[!is.na(temp$value),]
+# visits<-dcast( temp , id ~ value, function(x) as.numeric(length(x)>0) )
+```
+
+pre-make a Dataframe of zeros to insure we only get "class_values" (the ones we stored from Customer matrix)
+```{r}
+# class_value_matrix<-data.frame(matrix(0L,nrow=nrow(visits),ncol=length(class_values)))
+# colnames(class_value_matrix)<-class_values
+```
+
+Use Dataframe to insure only the proper binary matrix values get through
+```{r}
+#VISIT_MATRIX_FOR_CLASS<-cbind(visits[,names(visits) %in% names(class_value_matrix)],class_value_matrix[,!names(class_value_matrix) %in% names(visits)])
+```
+
+Write to ProcessedWD
+```{r echo =FALSE}
+# setwd(ProcessedWD)
+# write.csv(VISIT_MATRIX_FOR_CLASS,"VISIT_MATRIX_FOR_CLASSIFICATION.csv",row.names=FALSE)
+```
+
+# Cleaning Distance
+## Get a Clean Matrix Relating Stores to Distance
+
+Some basic Cleaning, remove NA, remove useless column, remove "Longchamp" who is all zeros
+```{r}
+lookup<-lookup[complete.cases(lookup),1:2]
+lookup<-lookup[lookup$Tenant_Distance!="Longchamp",]
+```
+
+use unique_customer_stores to see which of their lists are actually named properly
+```{r}
+finance_valid<-(lookup$Tenant_Financials %in% unique_customer_stores)
+distance_valid<-(lookup$Tenant_Distance %in% unique_customer_stores)
+```
+
+Allow both index to be checked, take either one 
+```{r}
+lookup$Tenant_Financials2<-lookup$Tenant_Financials
+lookup$Tenant_Distance2<-lookup$Tenant_Distance
+lookup$Tenant_Financials2[!finance_valid]<- NA 
+lookup$Tenant_Distance2[!distance_valid]<- NA 
+lookup$Allowed_Stores<-coalesce(lookup$Tenant_Financials2,lookup$Tenant_Distance2)
+```
+
+Remove NA rows, only keep those we care about, inner_join can then be used to sort it out
+```{r}
+lookup<-lookup[!is.na(lookup$Allowed_Stores),]
+```
+
+Turn distance into pairwise matrix, make character 
+```{r echo=FALSE}
+distance<-melt(distance)
+colnames(distance)<-c("Store1","Store2","Distance")
+distance$Store1<- as.character(distance$Store1)
+distance$Store2<- as.character(distance$Store2)
+```
+
+Make in terms of allowed name
+```{r}
+dist_join1<-inner_join(distance,lookup, by = c("Store1"="Tenant_Distance"))
+dist_join2<-inner_join(dist_join1,lookup, by = c("Store2"="Tenant_Distance"))
+dist_clean<-subset(dist_join2, select = c(Allowed_Stores.x,Allowed_Stores.y,Distance))
+colnames(dist_clean)<-c("Store1","Store2","Distance")
+```
+
+STORE the stores with an associated distance value
+```{r}
+distanced_stores<-lookup$Allowed_Stores
+```
+
+## Further Clean up "acceptable_visits" to only include stores with distances
+
+Remove non distanced_stores 
+```{r}
+distanced_visits<-acceptable_visits
+for (i in 1:100)
+{
+  
+  colindex<-((i*3)-1)
+  rowindex <- !distanced_visits[,colindex] %in% distanced_stores
+  rowindex <- rowindex==TRUE|is.na(rowindex) #handles NA values
+  
+  distanced_visits[rowindex,colindex]<-NA
+  distanced_visits[rowindex,colindex+1]<-NA
+  distanced_visits[rowindex,colindex+2]<-NA
+  
+}
+
+```
+########################################################################################################################################
+# CLASSIFICATION RESULTS !!  
+Uses the Outputs of this file: "CUST_MATRIX_FOR_CLASSIFICATION" and "VISIT_MATRIX_FOR_CLASSIFICATION"
+
+file name: "3.4-ng-gender-classification-model-customers-visits.Rmd"
+
+Produces: "visit_w_gender.csv" it is used as an input below.
+
+See the READ ME: at the top for slightly more info
+
+## Classification Modeling Results 
+
+```{r}
+setwd(ProcessedWD)
+predict_gender<-read.csv("visits_w_gender.csv",header=TRUE)
+predict_gender<-predict_gender$y_pred_glm_visits
+predict_gender<-str_title_case(predict_gender)
+```
+########################################################################################################################################
+## Segment acceptable_visits DATA by our indices !!!! THIS IS WHAT WE CAN CHANGE !!!!
+
+
+weekday/gender  !!!! THIS IS WHAT WE CAN CHANGE !!!!
+```{r}
+selected_weekday="Monday" 
+selected_gender ="Male" 
+
+
+visit_row_index<-(weekday==selected_weekday & predict_gender==selected_gender) #rep(TRUE,length = length(weekday)) 
+```
+
+remove 0 time rows
+```{r}
+no_visit_fix <- rowSums(distanced_visits[,grepl("Dwell",colnames(distanced_visits))],na.rm=TRUE)!=0
+
+distanced_visits<-distanced_visits[no_visit_fix,]
+visit_row_index<-visit_row_index[no_visit_fix]
+
+```
+
+create segmented transactional 
+```{r}
+transaction_visits<-distanced_visits[visit_row_index,grepl("Name",names(distanced_visits))]
+```
+
+write as a csv, read as transaction
+```{r}
+setwd(ProcessedWD)
+write.csv(transaction_visits, file = "transaction_visits.csv",row.names=FALSE,quote = FALSE, na = "")
+Visit_TR_Store <- read.transactions("transaction_visits.csv", format = "basket", sep=",", rm.duplicates = TRUE ,skip = 1)
+```
+
+#Make and Segment the Rules 
+
+## Average and Total Dwell Time
+
+Index to only the segment we care about
+```{r}
+visit_math<-distanced_visits[visit_row_index,]
+id<-1:length(visit_math$Space.Name)
+```
+
+Get vector of names
+```{r}
+visit_math_name<-cbind(id,visit_math[,grepl("Name",colnames(visit_math))])
+visit_math_name<-melt(visit_math_name,id.var="id")
+name<-visit_math_name$value
+```
+
+Get vector of dwell
+```{r}
+visit_math_dwell<-cbind(id,visit_math[,grepl("Dwell",colnames(visit_math))])
+visit_math_dwell<-melt(visit_math_dwell,id.var="id")
+dwell<-as.numeric(visit_math_dwell$value)
+```
+
+Combine them
+```{r}
+visit_math_total <-data.frame(name,dwell)
+visit_math_total<-visit_math_total[complete.cases(visit_math_total),]
+
+```
+
+Aggregate them
+```{r}
+visit_avg_time<-aggregate(visit_math_total$dwell, by= list(visit_math_total$name), function(x) mean(x))
+visit_total_time<-aggregate(visit_math_total$dwell, by= list(visit_math_total$name), function(x) sum(x))
+visit_length_time<-aggregate(visit_math_total$dwell, by= list(visit_math_total$name), function(x) length(x))
+
+```
+
+Make 1 dataframe
+```{r}
+dwell_stores<-data.frame(cbind(as.character(visit_avg_time$Group.1),visit_avg_time$x,visit_total_time$x,visit_length_time$x))
+colnames(dwell_stores)<-c("Store","Average_Time","Total_Time","Count")
+dwell_stores[,2:4] = apply(dwell_stores[,2:4], 2, function(x) as.numeric(x))
+
+```
+
+Find Target Stores
+```{r}
+# Acceptable stores ? just say better than average minue 1/3 sd for average dwell , and worse than 1/2 sd of total time
+dwell_stores$target_store<-(dwell_stores$Average_Time > mean(dwell_stores$Average_Time)-(1/3)*sd(dwell_stores$Average_Time))&
+                           (dwell_stores$Total_Time < mean(dwell_stores$Total_Time)+(1/2)*sd(dwell_stores$Total_Time))
+
+target_stores<-as.character(dwell_stores$Store[dwell_stores$target_store])
+```
+
+## Make Rules, limit to target_stores
+```{r echo=FALSE}
+rules <- apriori(Visit_TR_Store,parameter = list(supp = 0.00001, conf = 0.1, minlen = 3),appearance =list(rhs= c(target_stores)))
+rules<- sort (rules, by="lift", decreasing=TRUE)
+
+```
+
+# Determine Outputs to Reccomender System
+
+## Rules 
+```{r echo = FALSE }
+inspect(rules)
+
+```
+
+## Time reccomendation
+
+Take only the times 
+```{r}
+visit_time<-visits_orig[StoreDwellCheck!=0,]
+visit_time<-visit_time[no_visit_fix,]
+visit_time<-visit_time[visit_row_index,grepl("Dwell",colnames(visit_time))]
+```
+
+Filter out entire rows for employees!
+```{r}
+
+for (i in 1:100)
+{ 
+  colindex<-(i)  
+  rowindex <- visit_time[,colindex]<=180
+  rowindex <- rowindex==TRUE|is.na(rowindex) #handles NA values
+  
+  visit_time<-visit_time[rowindex,]
+  
+}
+```
+
+Reccomend a time based on mean and sd
+```{r results = 'markup'}
+total_visit_time<-rowSums(visit_time,na.rm=T)
+total_visit_time_df<-data.frame(total_visit_time)
+
+ggplot(total_visit_time_df,aes(total_visit_time)) + geom_freqpoly(binwidth=10,colour = "blue") + labs(x="Total Time (min)", y="Frequency") +ggtitle(paste0("Total Time per Visit, ",selected_gender," ",selected_weekday))  +theme(plot.title = element_text(hjust = 0.45))
+
+
+reccomend_time<-mean(total_visit_time) -0.5* sd(total_visit_time)
+reccomend_time
+```
+
+## Distance as function of N stores
+```{r}
+visit_dist <- acceptable_visits[visit_row_index,grepl("Name",colnames(acceptable_visits))]
+```
+
+Shift all values to left side
+```{r}
+visit_dist[] <-  t(apply(visit_dist, 1, function(x) c(x[!is.na(x)], x[is.na(x)])))
+```
+
+Matrix to capture distances between stores
+```{r}
+distance_per_store<-data.frame(matrix(NA,nrow = nrow(visit_dist),ncol= ncol(visit_dist)))
+
+for (i in 1:99)
+{
+  visit_dist_join<-visit_dist
+  colname1<-paste(colnames(visit_dist_join[i]))
+  colname2<-paste(colnames(visit_dist_join[i+1]))
+  
+  Distance <-left_join(visit_dist_join[,c(i,i+1)],dist_clean, by =c(setNames("Store1",colname1),setNames("Store2",colname2)))
+  
+  distance_per_store[i]<-Distance[,grepl("Distance",colnames(Distance))]
+  colnames(distance_per_store)[i]<-paste0("Distance_Store", i,"_To_Store",i+1)
+}  
+```
+
+
+Distance mean and sd and count after each store, only allow those with more than 50 entries
+```{r results = 'markup'}
+distance_mean<-colMeans(distance_per_store,na.rm=TRUE)
+distance_sd<- sapply(distance_per_store, sd,na.rm=TRUE)
+distance_count<-colSums(!is.na(distance_per_store))
+
+distance_mean<-distance_mean[distance_count>50]
+id<-1:length(distance_mean)
+
+distance_df<-data.frame(cbind(id,distance_mean))
+ggplot(distance_df,aes(id,distance_mean)) + geom_point(colour="blue",size=6,fill = "red") + ylab("Distance (ft)") + scale_x_continuous("Store N to Store N+1", labels = as.character(id), breaks = id)+ggtitle(paste0("Distance between Store N and Store N+1, ",selected_gender," ",selected_weekday))+theme(plot.title = element_text(hjust = 0.45))
+
+## get mean distance irregardless of stor
+reccomend_distance_list<-unlist(distance_per_store)
+reccomend_distance_mean<-mean(reccomend_distance_list,na.rm=TRUE)
+reccomend_distance_sd<-sd(reccomend_distance_list,na.rm=TRUE)
+
+reccomend_distance<-reccomend_distance_mean - 1*reccomend_distance_sd
+reccomend_distance
+
+hist_reco_dist<-reccomend_distance_list[!is.na(reccomend_distance_list)]
+hist(hist_reco_dist,breaks = 30,main = "Distance Traveled Between Stores, Female Sunday",xlab= "Distance(ft)", ylab = "Frequency")
+```
+

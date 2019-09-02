@@ -1,0 +1,532 @@
+---
+title: "3.1-ng-gender-classification-model-customers"
+author: "Neal Gilmore"
+date: '2018-10-23'
+output:
+  html_document:
+    params: 
+      output_dir: "../reports/"
+    toc: true
+    toc_depth: 5
+    toc_float: 
+      collapsed: true
+    code_folding: show
+  md_document:
+    variant: markdown_github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, results = "hide")
+```
+
+### Import required libraries
+```{r results="markup"}
+
+#setup
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(Amelia)
+library(caret)
+library(caTools)
+library(e1071)
+library(ElemStatLearn)
+library(randomForest)
+library(rpart)
+library(readxl)
+library(ROCR)
+library(lime)
+library(vip)
+library(hrbrthemes)
+library(h2o)
+library(ggpubr)
+library(gridExtra)
+library(scales)
+
+getwd()
+setwd("../models/")
+getwd()
+
+```
+
+### Customers data
+```{r results = 'markup'}
+
+# import customers
+customers <- read.csv("../data/processed/CUSTOMER_MATRIX_FOR_CLASSIFICATION.csv", header=TRUE, na.string=c(NA, " ", ""), stringsAsFactors = FALSE)
+
+#str(customers)
+#head(customers)
+#dim(customers)
+
+```
+
+### Delete unnecessary colummns
+```{r results="markup"}
+
+#str(customers)
+
+rem_cols <- c('X', 'id', 'age')
+
+# remove unnecessary columns
+customers_reduced <- customers %>%
+  select(-one_of(rem_cols))
+
+#str(customers_reduced)
+
+unique(customers_reduced$gender)
+
+data <- customers_reduced[c("gender")]
+
+str(data)
+
+data <- data %>%
+  group_by(gender) %>%
+  mutate(num_visits = n())
+
+data <- unique(data)
+
+head(data)
+
+#missmap(customers_reduced)
+
+# Distribution of gender groups
+p_gender <- ggplot(customers_reduced, aes(x = gender, stat = "count")) +
+  geom_bar(color = "#003366", fill = "#003366") +
+  labs(x = 'Gender',
+       y = '# of Records',
+       title = 'Gender',
+       subtitle = 'Customers by Gender',
+       caption = 'Source: GreenwoodGroup') +
+  scale_y_continuous(label = comma) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 20),
+		legend.position = "none") +
+  theme_minimal(base_size = 14)
+#  theme_ipsum()
+p_gender
+
+```
+
+### Filter down to just rows with Gender = 'male' or 'female' data
+```{r results="markup"}
+
+customers_reduced_gender <- customers_reduced %>%
+  filter(gender != '<NA>') %>%
+  filter(gender != 'male (hidden)') %>%
+  filter(gender != 'other')
+
+unique(customers_reduced_gender$gender)
+
+dim(customers_reduced_gender)
+
+# Distribution of gender groups
+p_gender <- ggplot(customers_reduced_gender, aes(x = gender, stat = "count")) +
+  geom_bar(color = "#003366", fill = "#003366") +
+  labs(x = 'Gender',
+       y = '# of Records',
+       title = 'Gender Reduced',
+       subtitle = 'Customers by Gender',
+       caption = 'Source: GreenwoodGroup') +
+  scale_y_continuous(label = comma) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 20),
+	  legend.position = "none") +
+  theme_minimal(base_size = 14)
+p_gender
+```
+
+### Encode target feature as a vector
+```{r results = 'markup'}
+
+customers_reduced_gender$gender <- as.factor(customers_reduced_gender$gender)
+
+#str(customers_reduced_gender)
+
+```
+
+### Split the dataset into Training and Test sets
+```{r results="markup"}
+
+set.seed(123)
+split <- sample.split(customers_reduced_gender$gender, SplitRatio = 0.75)
+training_set <- subset(customers_reduced_gender, split == TRUE)
+test_set <- subset(customers_reduced_gender, split == FALSE)
+
+```
+
+### Fit a Logistic Regression Model to the Training Set
+```{r results="markup"}
+
+classifier_glm = glm(formula = gender ~ .,
+                 family = binomial,
+                 data = training_set)
+
+# plot(classifier_glm)
+
+# save results of classification model
+save(classifier_glm, file = "../data/processed/customer_gender_glm_classification.RData")
+
+```
+
+### Predict the Test Set results - Logistic Regression
+```{r results = 'markup'}
+
+prob_pred_glm = predict(classifier_glm, type = 'response', newdata = test_set[-1])
+y_pred_glm = ifelse(prob_pred_glm > 0.44, 'male', 'female')
+
+```
+
+### Visualize the results of the Logistic Regression Model
+```{r results="markup"}
+
+p_glm <- ggplot(data.frame("pred" = y_pred_glm, "gender" = test_set$gender), aes(y_pred_glm, gender)) +
+  geom_jitter(aes(y_pred_glm, gender), alpha = 0.1, color = "#003366") +
+  labs(x = 'Predicted Gender',
+       y = 'Actual Gender',
+       title = 'Classification Model - Gender',
+       subtitle = 'Logistic Regression',
+       caption = 'Source: GreenwoodGroup') +
+  theme(axis.title.x = element_text(size = 20),
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 20),
+	  legend.position = "none") +
+  theme_minimal(base_size = 14)
+p_glm
+
+```
+
+### Confusion Matrix - Logistic Regression Model
+```{r results="markup"}
+
+cm_glm <- table(test_set[, 1], y_pred_glm)
+cm_glm
+
+accuracy_glm <- (cm_glm[1, 1] + cm_glm[2, 2]) / (cm_glm[1, 1] + cm_glm[1, 2] + cm_glm[2, 1] + cm_glm[2, 2])
+accuracy_glm
+
+recall_glm <- cm_glm[1, 1] / (cm_glm[1, 1] + cm_glm[2, 1])
+recall_glm
+
+precision_glm <- cm_glm[1, 1] / (cm_glm[1, 1] + cm_glm[1, 2])
+precision_glm
+
+f1_score_glm <- 2 * precision_glm * recall_glm / (precision_glm + recall_glm)
+f1_score_glm
+
+#recall(cm_glm)
+#precision(cm_glm)
+#confusionMatrix(cm_glm)
+
+```
+
+### LIME explanation - Logistic Regression Model
+```{r}
+
+#explain_glm <- lime(training_set, model = classifier_glm)
+
+#head(explain_glm)
+
+#plot_features(explain_glm)
+
+```
+
+### Fit a Decision Tree Classification Model to the Training set
+```{r results="markup"}
+
+classifier_dt <- rpart(formula = gender ~ .,
+                       data = training_set)
+
+#plot(classifier_dt)
+
+# save results of classification model
+save(classifier_dt, file = "../data/processed/customer_gender_dt_classification.RData")
+
+```
+
+### Predict the Test set results
+```{r results='markup'}
+
+y_pred_dt <- predict(classifier_dt, type = 'class', newdata = test_set[-1])
+#head(y_pred_dt, 50)
+
+```
+
+### Visualize the results of the Decision Tree Regression Model
+```{r results="markup"}
+
+p_dt <- ggplot(data.frame("pred" = y_pred_dt, "gender" = test_set$gender), aes(y_pred_dt, gender)) +
+  geom_jitter(aes(y_pred_dt, gender), alpha = 0.1, color = "#003366") +
+  labs(x = 'Predicted Gender',
+       y = 'Actual Gender',
+       title = 'Classification Model - Gender',
+       subtitle = 'Decision Tree',
+       caption = 'Source: GreenwoodGroup') +
+  theme(axis.title.x = element_text(size = 20),
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 20),
+	  legend.position = "none") +
+  theme_minimal(base_size = 14)
+p_dt
+
+```
+
+### Confusion Matrix - Decision Tree Model
+```{r results="markup"}
+
+cm_dt <- table(test_set[, 1], y_pred_dt)
+cm_dt
+
+accuracy_dt <- (cm_dt[1, 1] + cm_dt[2, 2]) / (cm_dt[1, 1] + cm_dt[1, 2] + cm_dt[2, 1] + cm_dt[2, 2])
+accuracy_dt
+
+recall_dt <- cm_dt[1, 1] / (cm_dt[1, 1] + cm_dt[2, 1])
+recall_dt
+
+precision_dt <- cm_dt[1, 1] / (cm_dt[1, 1] + cm_dt[1, 2])
+precision_dt
+
+f1_score_dt <- 2 * precision_dt * recall_dt / (precision_dt + recall_dt)
+f1_score_dt
+
+#recall(cm_rf)
+#precision(cm_rf)
+#confusionMatrix(cm_dt)
+
+```
+
+### Plot - Decision Tree Regression Model
+```{r}
+
+#plot(classifier_dt)
+
+```
+
+### Fit a Random Forest Classification Model to the Training set
+```{r results="markup"}
+
+classifier_rf <- randomForest(x = training_set[-1],
+                           y = training_set$gender,
+                           ntree = 10)
+
+#plot(classifier_rf)
+
+# save results of classification model
+save(classifier_rf, file = "../data/processed/customer_gender_rf_classification.RData")
+
+```
+
+### Predict the Test set results
+```{r results = 'markup'}
+
+y_pred_rf <- predict(classifier_rf, type = 'class', newdata = test_set[-1])
+#head(y_pred_rf, 50)
+
+```
+
+### Visualize the results of the Random Forest Regression Model
+```{r results="markup"}
+
+p_rf <- ggplot(data.frame("pred" = y_pred_rf, "gender" = test_set$gender), aes(y_pred_rf, gender)) +
+  geom_jitter(aes(y_pred_rf, gender), alpha = 0.1, color = "#003366") +
+  labs(x = 'Predicted Gender',
+       y = 'Actual Gender',
+       title = 'Classification Model - Gender',
+       subtitle = 'Random Forest',
+       caption = 'Source: GreenwoodGroup') +
+  theme(axis.title.x = element_text(size = 20),
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 20),
+	  legend.position = "none") +
+  theme_minimal(base_size = 14)
+p_rf
+
+```
+
+### Visualize a Decision Tree from the Random Forest Model
+```{r}
+
+# model_rf <- getTree(classifier_rf, 3, labelVar = TRUE)
+# 
+# reprtree::plot.getTree(model_rf)
+
+```
+
+### Confusion Matrix - Random Forest Model
+```{r results="markup"}
+
+cm_rf <- table(test_set[, 1], y_pred_rf)
+cm_rf
+
+accuracy_rf <- (cm_rf[1, 1] + cm_rf[2, 2]) / (cm_rf[1, 1] + cm_rf[1, 2] + cm_rf[2, 1] + cm_rf[2, 2])
+accuracy_rf
+
+recall_rf <- cm_rf[1, 1] / (cm_rf[1, 1] + cm_rf[2, 1])
+recall_rf
+
+precision_rf <- cm_rf[1, 1] / (cm_rf[1, 1] + cm_rf[1, 2])
+precision_rf
+
+f1_score_rf <- 2 * precision_rf * recall_rf / (precision_rf + recall_rf)
+f1_score_rf
+
+#recall(cm_rf)
+#precision(cm_rf)
+#confusionMatrix(cm_dt)
+
+```
+
+### LIME explanation - Random Forest Regression Model
+```{r}
+
+#explain_rf <- lime(training_set, model = classifier_rf)
+
+#head(explain_rf)
+
+#plot_features(explain_rf)
+
+```
+
+### Fit the Naive Bayes Classification Model to the Training set
+```{r results="markup"}
+
+classifier_nb <- naiveBayes(x = training_set[-1],
+                           y = training_set$gender)
+
+#plot(classifier_nb)
+
+# save results of classification model
+save(classifier_nb, file = "../data/processed/customer_gender_nb_classification.RData")
+
+```
+
+### Predict the Test set results
+```{r results = 'markup'}
+
+y_pred_nb <- predict(classifier_nb, newdata = test_set[-1])
+#head(y_pred_nb, 50)
+
+```
+
+### Visualize the results of the Naive Bayes Regression Model
+```{r results="markup"}
+
+p_nb <- ggplot(data.frame("pred" = y_pred_nb, "gender" = test_set$gender), aes(y_pred_nb, gender)) +
+  geom_jitter(aes(y_pred_nb, gender), alpha = 0.1, color = "#003366") +
+  labs(x = 'Predicted Gender',
+       y = 'Actual Gender',
+       title = 'Classification Model - Gender',
+       subtitle = 'Naive Bayes',
+       caption = 'Source: GreenwoodGroup') +
+  theme(axis.title.x = element_text(size = 20),
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 20),
+	  legend.position = "none") +
+  theme_minimal(base_size = 14)
+p_nb
+
+```
+
+### Confusion Matrix - Naive Bayes Model
+```{r results="markup"}
+
+cm_nb <- table(test_set[, 1], y_pred_nb)
+cm_nb
+
+accuracy_nb <- (cm_nb[1, 1] + cm_nb[2, 2]) / (cm_nb[1, 1] + cm_nb[1, 2] + cm_nb[2, 1] + cm_nb[2, 2])
+accuracy_nb
+
+recall_nb <- cm_nb[1, 1] / (cm_nb[1, 1] + cm_nb[2, 1])
+recall_nb
+
+precision_nb <- cm_nb[1, 1] / (cm_nb[1, 1] + cm_nb[1, 2])
+precision_nb
+
+f1_score_nb <- 2 * precision_nb * recall_nb / (precision_nb + recall_nb)
+f1_score_nb
+
+#recall(cm_nb)
+#precision(cm_nb)
+#confusionMatrix(cm_nb)
+
+```
+
+### LIME explanation - Naive Bayes Regression Model
+```{r}
+
+#explain_nb <- lime(training_set, model = classifier_nb)
+
+#head(explain_nb)
+
+#plot_features(explain_nb)
+
+```
+
+### Visits data - only has January data
+```{r results = 'markup'}
+
+# import visits
+visits <- read.csv("../data/processed/VISIT_MATRIX_FOR_CLASSIFICATION2.csv", header = TRUE, na.string = c(NA, " ", ""), stringsAsFactors = FALSE)
+
+#str(visits)
+#head(visits)
+dim(visits)
+
+# convert logical to binary values
+visits <- visits * 1
+
+#str(visits)
+#head(visits)
+dim(visits)
+
+```
+
+### Predict the Test Set results - Logistic Regression
+```{r results = 'markup'}
+
+prob_pred_glm_visits = predict(classifier_glm, type = 'response', newdata = visits)
+y_pred_glm_visits = ifelse(prob_pred_glm_visits > 0.44, 'male', 'female')
+
+#str(y_pred_glm_visits)
+
+visits_w_gender <- cbind(y_pred_glm_visits, visits)
+#str(visits_w_gender)
+
+data <- visits_w_gender[c("y_pred_glm_visits")]
+
+#str(data)
+
+data <- data %>%
+  group_by(y_pred_glm_visits) %>%
+  mutate(num_visits = n())
+
+data <- unique(data)
+
+#head(data)
+
+#write as csv
+write.csv(visits_w_gender, file = "../data/processed/visits_w_gender.csv", row.names = FALSE, quote = FALSE, na = "")
+
+```
+
+### Visualize the results of the Logistic Regression Model applied to the Visits data
+```{r results="markup"}
+
+p_visits_gender <- ggplot(visits_w_gender, aes(x = y_pred_glm_visits, stat = "count")) +
+  geom_bar(color = "#003366", fill = "#003366") +
+  labs(x = 'Gender',
+       y = '# of Records',
+       title = 'Gender Prediction by Visit',
+       subtitle = 'Customers Visits by Gender (Jan 2018)',
+       caption = 'Source: GreenwoodGroup') +
+  scale_y_continuous(label = comma) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 20),
+	  legend.position = "none") +
+  theme_minimal(base_size = 14)
+p_visits_gender
+
+```
