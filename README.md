@@ -1,7 +1,4 @@
 # Oxford Mall Customer Predictions 
-
-Author: Andrew Garvey, (MMAI Group Project)
-
 Date: Sept-Oct 2018 
 
 Languages: R
