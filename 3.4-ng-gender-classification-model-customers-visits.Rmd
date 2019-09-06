@@ -1,6 +1,5 @@
 ---
 title: "3.1-ng-gender-classification-model-customers"
-author: "Neal Gilmore"
 date: '2018-10-23'
 output:
   html_document:
