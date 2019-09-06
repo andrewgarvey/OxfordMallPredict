@@ -1,6 +1,5 @@
 ---
 title: "Oxford Clean Version"
-author: "Andrew Garvey"
 date: "October 26, 2018"
 output: word_document
 ---
@@ -8,34 +7,6 @@ output: word_document
 knitr::opts_chunk$set(echo = TRUE, results = "hide")
 knitr::opts_knit$set(root.dir = "D:/QUEENS MMAI/869 ML and AI/Project/OutputData")
 ```
-# READ ME :  
-Hi, 
-
-The 2 commented out code sections are very memory expensive, they needed to be run only once and were able to be run seperately,
-they produce the binary matrices for "Customer_matrix_for_classification.csv" and "Visit_matrix_for_classification.csv" ... 
-
-These 2 files are provided, and can be used in exploring the "3.4-ng-gender-classification-model-customers-visits.Rmd" classification model
-
-The output of "3.4-ng-gender-classification-model-customers-visits.Rmd" is "visits_w_gender.csv" which is also provided. 
-
-"visit_w_gender.csv" is used in this file in the Classification Results section 
-
-----------------------------------------------------------------------------------------------------------------------
-TO RUN THIS FILE....
-
-ProcessedWD must contain:
-
-"visit_w_gender.csv" 
-
-RawWD must contain:
-
-"Data Set - Jan 2018 to Jun 2018_Financials and Distance Matrix.xlsx"
-"1223_sw_jan2018_to_july2018.csv"
-"JAN 2018_flow.csv"
-
-Cheers
-
-Greenwood Group
 
 # Setup 
 ## Set WDs 
